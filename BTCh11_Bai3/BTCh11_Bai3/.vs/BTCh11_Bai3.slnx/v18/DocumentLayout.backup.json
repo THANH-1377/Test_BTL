@@ -1,0 +1,137 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "C:\\Users\\Do Nhat Thanh\\Downloads\\BTCh11_Bai3\\BTCh11_Bai3\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{2853952E-3F05-5DC6-B270-2DAE325C7F86}|BTCh11_Bai3\\BTCh11_Bai3.csproj|c:\\users\\do nhat thanh\\downloads\\btch11_bai3\\btch11_bai3\\btch11_bai3\\models\\ql_dangoaicontext.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{2853952E-3F05-5DC6-B270-2DAE325C7F86}|BTCh11_Bai3\\BTCh11_Bai3.csproj|solutionrelative:btch11_bai3\\models\\ql_dangoaicontext.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{2853952E-3F05-5DC6-B270-2DAE325C7F86}|BTCh11_Bai3\\BTCh11_Bai3.csproj|c:\\users\\do nhat thanh\\downloads\\btch11_bai3\\btch11_bai3\\btch11_bai3\\form1.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{2853952E-3F05-5DC6-B270-2DAE325C7F86}|BTCh11_Bai3\\BTCh11_Bai3.csproj|solutionrelative:btch11_bai3\\form1.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{2853952E-3F05-5DC6-B270-2DAE325C7F86}|BTCh11_Bai3\\BTCh11_Bai3.csproj|c:\\users\\do nhat thanh\\downloads\\btch11_bai3\\btch11_bai3\\btch11_bai3\\btch11_bai3.csproj||{FA3CD31E-987B-443A-9B81-186104E8DAC1}|",
+      "RelativeMoniker": "D:0:0:{2853952E-3F05-5DC6-B270-2DAE325C7F86}|BTCh11_Bai3\\BTCh11_Bai3.csproj|solutionrelative:btch11_bai3\\btch11_bai3.csproj||{FA3CD31E-987B-443A-9B81-186104E8DAC1}|"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{2853952E-3F05-5DC6-B270-2DAE325C7F86}|BTCh11_Bai3\\BTCh11_Bai3.csproj|c:\\users\\do nhat thanh\\downloads\\btch11_bai3\\btch11_bai3\\btch11_bai3\\appsettings.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}",
+      "RelativeMoniker": "D:0:0:{2853952E-3F05-5DC6-B270-2DAE325C7F86}|BTCh11_Bai3\\BTCh11_Bai3.csproj|solutionrelative:btch11_bai3\\appsettings.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{2853952E-3F05-5DC6-B270-2DAE325C7F86}|BTCh11_Bai3\\BTCh11_Bai3.csproj|C:\\Users\\Do Nhat Thanh\\Downloads\\BTCh11_Bai3\\BTCh11_Bai3\\btch11_bai3\\form1.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}|Form",
+      "RelativeMoniker": "D:0:0:{2853952E-3F05-5DC6-B270-2DAE325C7F86}|BTCh11_Bai3\\BTCh11_Bai3.csproj|solutionrelative:btch11_bai3\\form1.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}|Form"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{2853952E-3F05-5DC6-B270-2DAE325C7F86}|BTCh11_Bai3\\BTCh11_Bai3.csproj|c:\\users\\do nhat thanh\\downloads\\btch11_bai3\\btch11_bai3\\btch11_bai3\\form1.designer.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{2853952E-3F05-5DC6-B270-2DAE325C7F86}|BTCh11_Bai3\\BTCh11_Bai3.csproj|solutionrelative:btch11_bai3\\form1.designer.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 8,
+          "Children": [
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{b1e99781-ab81-11d0-b683-00aa00a3ee26}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:128:0:{116d2292-e37d-41cd-a077-ebacac4c8cc4}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:128:0:{75188d03-9892-4ae2-abf1-207126247ce5}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{aa2115a1-9712-457b-9047-dbb71ca2cdd2}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{3ae79031-e1bc-11d0-8f78-00a0c9110057}"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "appsettings.json",
+              "DocumentMoniker": "C:\\Users\\Do Nhat Thanh\\Downloads\\BTCh11_Bai3\\BTCh11_Bai3\\BTCh11_Bai3\\appsettings.json",
+              "RelativeDocumentMoniker": "BTCh11_Bai3\\appsettings.json",
+              "ToolTip": "C:\\Users\\Do Nhat Thanh\\Downloads\\BTCh11_Bai3\\BTCh11_Bai3\\BTCh11_Bai3\\appsettings.json",
+              "RelativeToolTip": "BTCh11_Bai3\\appsettings.json",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAIAAAAaAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001642|",
+              "WhenOpened": "2026-10-19T03:32:32.626Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "Form1.cs",
+              "DocumentMoniker": "C:\\Users\\Do Nhat Thanh\\Downloads\\BTCh11_Bai3\\BTCh11_Bai3\\BTCh11_Bai3\\Form1.cs",
+              "RelativeDocumentMoniker": "BTCh11_Bai3\\Form1.cs",
+              "ToolTip": "C:\\Users\\Do Nhat Thanh\\Downloads\\BTCh11_Bai3\\BTCh11_Bai3\\BTCh11_Bai3\\Form1.cs",
+              "RelativeToolTip": "BTCh11_Bai3\\Form1.cs",
+              "ViewState": "AgIAACwAAAAAAAAAAAAuwD0AAAAhAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-10-19T02:59:23.968Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "Form1.cs [Design]",
+              "DocumentMoniker": "C:\\Users\\Do Nhat Thanh\\Downloads\\BTCh11_Bai3\\BTCh11_Bai3\\BTCh11_Bai3\\Form1.cs",
+              "RelativeDocumentMoniker": "BTCh11_Bai3\\Form1.cs",
+              "ToolTip": "C:\\Users\\Do Nhat Thanh\\Downloads\\BTCh11_Bai3\\BTCh11_Bai3\\BTCh11_Bai3\\Form1.cs [Design]",
+              "RelativeToolTip": "BTCh11_Bai3\\Form1.cs [Design]",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-10-19T02:27:50.974Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "QL_DaNgoaiContext.cs",
+              "DocumentMoniker": "C:\\Users\\Do Nhat Thanh\\Downloads\\BTCh11_Bai3\\BTCh11_Bai3\\BTCh11_Bai3\\Models\\QL_DaNgoaiContext.cs",
+              "RelativeDocumentMoniker": "BTCh11_Bai3\\Models\\QL_DaNgoaiContext.cs",
+              "ToolTip": "C:\\Users\\Do Nhat Thanh\\Downloads\\BTCh11_Bai3\\BTCh11_Bai3\\BTCh11_Bai3\\Models\\QL_DaNgoaiContext.cs",
+              "RelativeToolTip": "BTCh11_Bai3\\Models\\QL_DaNgoaiContext.cs",
+              "ViewState": "AgIAAAoAAAAAAAAAAAA2wBIAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-10-19T02:42:33.66Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "BTCh11_Bai3.csproj",
+              "DocumentMoniker": "C:\\Users\\Do Nhat Thanh\\Downloads\\BTCh11_Bai3\\BTCh11_Bai3\\BTCh11_Bai3\\BTCh11_Bai3.csproj",
+              "RelativeDocumentMoniker": "BTCh11_Bai3\\BTCh11_Bai3.csproj",
+              "ToolTip": "C:\\Users\\Do Nhat Thanh\\Downloads\\BTCh11_Bai3\\BTCh11_Bai3\\BTCh11_Bai3\\BTCh11_Bai3.csproj",
+              "RelativeToolTip": "BTCh11_Bai3\\BTCh11_Bai3.csproj",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAA8AAABAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000758|",
+              "WhenOpened": "2026-10-19T03:31:37.775Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 5,
+              "Title": "Form1.Designer.cs",
+              "DocumentMoniker": "C:\\Users\\Do Nhat Thanh\\Downloads\\BTCh11_Bai3\\BTCh11_Bai3\\BTCh11_Bai3\\Form1.Designer.cs",
+              "RelativeDocumentMoniker": "BTCh11_Bai3\\Form1.Designer.cs",
+              "ToolTip": "C:\\Users\\Do Nhat Thanh\\Downloads\\BTCh11_Bai3\\BTCh11_Bai3\\BTCh11_Bai3\\Form1.Designer.cs",
+              "RelativeToolTip": "BTCh11_Bai3\\Form1.Designer.cs",
+              "ViewState": "AgIAAKcAAAAAAAAAAAAgwLoAAAAkAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-10-19T03:27:48.799Z"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
