@@ -1,0 +1,1494 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Drawing;
+using System.Globalization;
+using System.Windows.Forms;
+using Microsoft.Data.SqlClient;
+using BaiTap_WinForms.Data;
+using BaiTap_WinForms.Models;
+
+namespace BaiTap_WinForms.Forms
+{
+    public partial class FormMain : Form
+    {
+        private readonly CultureInfo _vnCulture = new CultureInfo("vi-VN");
+        private MenuStrip menuStripDynamic = null!;
+
+        public FormMain()
+        {
+            InitializeComponent();
+        }
+
+        private void FormMain_Load(object sender, EventArgs e)
+        {
+            // Hiển thị thông tin đăng nhập
+            lblUserInfo.Text = $"Xin chào: {UserSession.FullName} ({UserSession.RoleName})";
+
+            // Xây dựng menu động từ DB theo vai trò
+            BuildDynamicMenu();
+
+            // Phân quyền: nếu là STAFF thì ẩn các tab quản lý nâng cao (hoặc chỉ cho phép POS)
+            if (!UserSession.IsAdmin)
+            {
+                btnNavEmployees.Visible = false;
+                btnNavReports.Visible = false;
+            }
+
+            // Tải dữ liệu ban đầu
+            LoadPOSCategories();
+            LoadPOSProducts();
+            LoadProductsTab();
+            LoadIngredientsTab();
+            LoadReportsTab();
+            LoadEmployeesTab();
+
+            // Mặc định chọn POS
+            SwitchTab(0, btnNavPOS);
+        }
+
+
+
+        private void BuildDynamicMenu()
+        {
+            try
+            {
+                // Remove existing dynamic menu if any
+                if (menuStripDynamic != null && Controls.Contains(menuStripDynamic))
+                {
+                    Controls.Remove(menuStripDynamic);
+                    menuStripDynamic.Dispose();
+                }
+
+                menuStripDynamic = new MenuStrip { Dock = DockStyle.Top, BackColor = Color.WhiteSmoke };
+
+                string sql;
+                SqlParameter[]? parameters = null;
+                if (UserSession.IsAdmin)
+                {
+                    sql = "SELECT MaMenu, MaCode, MaMenuCha, TenHienThi, MaForm, Loai, ThuTu FROM dbo.MenuChucNang ORDER BY ThuTu";
+                }
+                else
+                {
+                    sql = @"SELECT m.MaMenu, m.MaCode, m.MaMenuCha, m.TenHienThi, m.MaForm, m.Loai, m.ThuTu
+                            FROM dbo.MenuChucNang m
+                            JOIN dbo.VaiTro_Menu vm ON m.MaMenu = vm.MaMenu
+                            JOIN dbo.VaiTro vt ON vm.MaVaiTro = vt.MaVaiTro
+                            WHERE vt.MaCode = @MaCode
+                            ORDER BY m.ThuTu";
+                    parameters = new SqlParameter[] { new SqlParameter("@MaCode", System.Data.SqlDbType.NVarChar, 30) { Value = UserSession.MaVaiTroCode } };
+                }
+
+                DataTable dt = DatabaseHelper.ExecuteQuery(sql, parameters);
+
+                // Build menu items map by MaMenu
+                var map = new Dictionary<int, ToolStripMenuItem>();
+                foreach (DataRow row in dt.Rows)
+                {
+                    int maMenu = Convert.ToInt32(row["MaMenu"]);
+                    string loai = row["Loai"].ToString() ?? "Trang";
+                    string ten = row["TenHienThi"].ToString() ?? "";
+                    string maForm = row["MaForm"] == DBNull.Value ? string.Empty : row["MaForm"].ToString() ?? string.Empty;
+
+                    var item = new ToolStripMenuItem(ten) { Tag = maForm };
+                    if (!string.IsNullOrEmpty(maForm))
+                    {
+                        item.Click += (s, e) =>
+                        {
+                            try
+                            {
+                                string formName = (string)((ToolStripMenuItem)s).Tag;
+                                if (string.IsNullOrEmpty(formName)) return;
+                                // Try to find the form type in current assembly
+                                var asm = typeof(FormMain).Assembly;
+                                var fullName = "BaiTap_WinForms.Forms." + formName;
+                                var type = asm.GetType(fullName) ?? Type.GetType(fullName);
+                                if (type == null)
+                                {
+                                    MessageBox.Show($"Không tìm thấy Form: {formName}", "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                                    return;
+                                }
+                                var frm = Activator.CreateInstance(type) as Form;
+                                if (frm == null)
+                                {
+                                    MessageBox.Show($"Không thể mở Form: {formName}", "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                                    return;
+                                }
+                                frm.StartPosition = FormStartPosition.CenterParent;
+                                frm.Show(this);
+                            }
+                            catch (Exception ex)
+                            {
+                                MessageBox.Show("Lỗi khi mở form: " + ex.Message, "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            }
+                        };
+                    }
+
+                    map[maMenu] = item;
+                }
+
+                // Attach hierarchy: top-level where MaMenuCha is null
+                foreach (DataRow row in dt.Rows)
+                {
+                    int maMenu = Convert.ToInt32(row["MaMenu"]);
+                    object maMenuChaObj = row["MaMenuCha"];
+                    if (maMenuChaObj == DBNull.Value)
+                    {
+                        menuStripDynamic.Items.Add(map[maMenu]);
+                    }
+                    else
+                    {
+                        int maMenuCha = Convert.ToInt32(maMenuChaObj);
+                        if (map.ContainsKey(maMenuCha))
+                        {
+                            map[maMenuCha].DropDownItems.Add(map[maMenu]);
+                        }
+                        else
+                        {
+                            // Fallback: add to top
+                            menuStripDynamic.Items.Add(map[maMenu]);
+                        }
+                    }
+                }
+
+                // Insert menuStripDynamic at top of controls so it doesn't overlap other top controls
+                Controls.Add(menuStripDynamic);
+                menuStripDynamic.BringToFront();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Lỗi khi tải menu động: " + ex.Message, "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+
+        private void btnLogout_Click(object sender, EventArgs e)
+        {
+            var result = MessageBox.Show("Bạn có chắc chắn muốn đăng xuất không?", "Xác nhận", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (result == DialogResult.Yes)
+            {
+                UserSession.Clear();
+                this.Hide();
+                var loginForm = new FormLogin();
+                if (loginForm.ShowDialog() == DialogResult.OK)
+                {
+                    this.FormMain_Load(sender, e);
+                    this.Show();
+                }
+                else
+                {
+                    this.Close();
+                }
+            }
+        }
+
+        private void btnNav_Click(object sender, EventArgs e)
+        {
+            if (sender == btnNavPOS) SwitchTab(0, btnNavPOS);
+            else if (sender == btnNavProducts) SwitchTab(1, btnNavProducts);
+            else if (sender == btnNavIngredients) SwitchTab(2, btnNavIngredients);
+            else if (sender == btnNavReports) SwitchTab(3, btnNavReports);
+            else if (sender == btnNavEmployees) SwitchTab(4, btnNavEmployees);
+        }
+
+        private void SwitchTab(int tabIndex, Button activeBtn)
+        {
+            tabMain.SelectedIndex = tabIndex;
+            var buttons = new[] { btnNavPOS, btnNavProducts, btnNavIngredients, btnNavReports, btnNavEmployees };
+            foreach (var btn in buttons)
+            {
+                if (btn == activeBtn)
+                {
+                    btn.BackColor = Color.FromArgb(230, 126, 34);
+                    btn.ForeColor = Color.White;
+                    btn.Font = new Font("Segoe UI", 11F, FontStyle.Bold);
+                }
+                else
+                {
+                    btn.BackColor = Color.FromArgb(44, 62, 80);
+                    btn.ForeColor = Color.Gainsboro;
+                    btn.Font = new Font("Segoe UI", 11F, FontStyle.Regular);
+                }
+            }
+        }
+
+        #region ======================== 1. MODULE BÁN HÀNG (POS) ========================
+
+        private ComboBox cboPOSCategory = null!;
+        private TextBox txtPOSSearch = null!;
+        private DataGridView dgvPOSMenu = null!;
+        private DataGridView dgvPOSCart = null!;
+        private Label lblPOSTotal = null!;
+        private NumericUpDown numPOSDiscount = null!;
+        private Label lblPOSFinal = null!;
+        private ComboBox cboPOSPaymentMethod = null!;
+        private TextBox txtPOSCustomerMoney = null!;
+        private Label lblPOSChange = null!;
+        private TextBox txtPOSNote = null!;
+        private Button btnPOSCheckout = null!;
+        private Button btnPOSClear = null!;
+
+        private readonly DataTable _cartTable = new DataTable();
+
+        private void InitializePOSTab()
+        {
+            tabPOS.BackColor = Color.FromArgb(245, 246, 250);
+
+            // Cấu trúc cartTable
+            _cartTable.Columns.Add("ProductID", typeof(int));
+            _cartTable.Columns.Add("ProductCode", typeof(string));
+            _cartTable.Columns.Add("ProductName", typeof(string));
+            _cartTable.Columns.Add("UnitPrice", typeof(decimal));
+            _cartTable.Columns.Add("Quantity", typeof(decimal));
+            _cartTable.Columns.Add("TotalAmount", typeof(decimal));
+
+            // Chia làm 2 cột: Trái (Thực đơn), Phải (Giỏ hàng & Thanh toán)
+            var splitContainer = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                SplitterDistance = 640,
+                IsSplitterFixed = false
+            };
+            tabPOS.Controls.Add(splitContainer);
+
+            // ================= CỘT TRÁI: THỰC ĐƠN =================
+            var panelMenu = new Panel { Dock = DockStyle.Fill, Padding = new Padding(10) };
+            splitContainer.Panel1.Controls.Add(panelMenu);
+
+            var groupMenu = new GroupBox
+            {
+                Text = "📋 THỰC ĐƠN MÓN",
+                Dock = DockStyle.Fill,
+                Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(44, 62, 80)
+            };
+            panelMenu.Controls.Add(groupMenu);
+
+            // Thanh tìm kiếm + lọc danh mục
+            var pnlMenuFilter = new Panel { Dock = DockStyle.Top, Height = 45, Padding = new Padding(5) };
+            groupMenu.Controls.Add(pnlMenuFilter);
+
+            var lblCat = new Label { Text = "Danh mục:", Location = new Point(5, 12), AutoSize = true, Font = new Font("Segoe UI", 9.5F) };
+            cboPOSCategory = new ComboBox { Location = new Point(80, 8), Size = new Size(180, 28), DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 9.5F) };
+            cboPOSCategory.SelectedIndexChanged += (s, e) => LoadPOSProducts();
+
+            var lblSearch = new Label { Text = "Tìm món:", Location = new Point(280, 12), AutoSize = true, Font = new Font("Segoe UI", 9.5F) };
+            txtPOSSearch = new TextBox { Location = new Point(350, 8), Size = new Size(220, 28), Font = new Font("Segoe UI", 9.5F) };
+            txtPOSSearch.TextChanged += (s, e) => LoadPOSProducts();
+
+            pnlMenuFilter.Controls.AddRange(new Control[] { lblCat, cboPOSCategory, lblSearch, txtPOSSearch });
+
+            // DataGridView Thực đơn
+            dgvPOSMenu = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                AllowUserToAddRows = false,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+                BackgroundColor = Color.White,
+                Font = new Font("Segoe UI", 9.5F)
+            };
+            dgvPOSMenu.CellDoubleClick += (s, e) => AddSelectedProductToCart();
+            groupMenu.Controls.Add(dgvPOSMenu);
+            dgvPOSMenu.BringToFront();
+
+            var btnAddCart = new Button
+            {
+                Text = "➕ Thêm Vào Giỏ Hàng (Hoặc Double-click)",
+                Dock = DockStyle.Bottom,
+                Height = 40,
+                BackColor = Color.FromArgb(39, 174, 96),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                Cursor = Cursors.Hand
+            };
+            btnAddCart.FlatAppearance.BorderSize = 0;
+            btnAddCart.Click += (s, e) => AddSelectedProductToCart();
+            groupMenu.Controls.Add(btnAddCart);
+
+            // ================= CỘT PHẢI: GIỎ HÀNG & THANH TOÁN =================
+            var panelCart = new Panel { Dock = DockStyle.Fill, Padding = new Padding(10) };
+            splitContainer.Panel2.Controls.Add(panelCart);
+
+            var groupCart = new GroupBox
+            {
+                Text = "🛒 ĐƠN HÀNG HIỆN TẠI",
+                Dock = DockStyle.Fill,
+                Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(44, 62, 80)
+            };
+            panelCart.Controls.Add(groupCart);
+
+            // DataGridView Giỏ hàng – dùng cột thủ công để tránh bị chồng
+            dgvPOSCart = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                AllowUserToAddRows = false,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
+                AutoGenerateColumns = false,
+                BackgroundColor = Color.White,
+                Font = new Font("Segoe UI", 9.5F),
+                ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize
+            };
+
+            // Định nghĩa cột thủ công
+            dgvPOSCart.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProductID",   Visible = false, HeaderText = "ID" });
+            dgvPOSCart.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ProductCode", Visible = false, HeaderText = "Mã" });
+            dgvPOSCart.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "ProductName", HeaderText = "Tên Món",
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+                MinimumWidth = 120
+            });
+            dgvPOSCart.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "UnitPrice", HeaderText = "Đơn Giá", Width = 90,
+                DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight }
+            });
+            dgvPOSCart.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "Quantity", HeaderText = "SL", Width = 48,
+                DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleCenter }
+            });
+            dgvPOSCart.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "TotalAmount", HeaderText = "Thành Tiền", Width = 100,
+                DefaultCellStyle = new DataGridViewCellStyle { Format = "N0", Alignment = DataGridViewContentAlignment.MiddleRight },
+                ReadOnly = true
+            });
+
+            dgvPOSCart.DataSource = _cartTable;
+            dgvPOSCart.CellValueChanged += (s, e) => RecalculateCart();
+            dgvPOSCart.RowsRemoved += (s, e) => RecalculateCart();
+
+            // Panel thanh toán phía dưới giỏ hàng
+            var pnlCheckout = new Panel { Dock = DockStyle.Bottom, Height = 280, Padding = new Padding(10), BackColor = Color.FromArgb(240, 243, 244) };
+
+            int y = 10;
+            var lblT1 = new Label { Text = "Tổng tiền hàng:", Location = new Point(15, y), AutoSize = true, Font = new Font("Segoe UI", 10F) };
+            lblPOSTotal = new Label { Text = "0 đ", Location = new Point(160, y), AutoSize = true, Font = new Font("Segoe UI", 11F, FontStyle.Bold), ForeColor = Color.FromArgb(44, 62, 80) };
+
+            y += 30;
+            var lblT2 = new Label { Text = "Giảm giá (VNĐ):", Location = new Point(15, y), AutoSize = true, Font = new Font("Segoe UI", 10F) };
+            numPOSDiscount = new NumericUpDown { Location = new Point(160, y - 2), Size = new Size(160, 26), Maximum = 10000000, Increment = 1000, Font = new Font("Segoe UI", 9.5F) };
+            numPOSDiscount.ValueChanged += (s, e) => RecalculateCart();
+
+            y += 30;
+            var lblT3 = new Label { Text = "KHÁCH PHẢI TRẢ:", Location = new Point(15, y), AutoSize = true, Font = new Font("Segoe UI", 10.5F, FontStyle.Bold) };
+            lblPOSFinal = new Label { Text = "0 đ", Location = new Point(160, y), AutoSize = true, Font = new Font("Segoe UI", 13F, FontStyle.Bold), ForeColor = Color.FromArgb(192, 57, 43) };
+
+            y += 35;
+            var lblT4 = new Label { Text = "Hình thức TT:", Location = new Point(15, y), AutoSize = true, Font = new Font("Segoe UI", 9.5F) };
+            cboPOSPaymentMethod = new ComboBox { Location = new Point(160, y - 2), Size = new Size(160, 26), DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 9.5F) };
+            cboPOSPaymentMethod.Items.AddRange(new object[] { "CASH (Tiền mặt)", "BANK_TRANSFER (Chuyển khoản)" });
+            cboPOSPaymentMethod.SelectedIndex = 0;
+
+            y += 30;
+            var lblT5 = new Label { Text = "Tiền khách đưa:", Location = new Point(15, y), AutoSize = true, Font = new Font("Segoe UI", 9.5F) };
+            txtPOSCustomerMoney = new TextBox { Location = new Point(160, y - 2), Size = new Size(160, 26), Font = new Font("Segoe UI", 9.5F) };
+            txtPOSCustomerMoney.TextChanged += (s, e) => CalculateChangeMoney();
+
+            y += 28;
+            var lblT6 = new Label { Text = "Tiền thối lại:", Location = new Point(15, y), AutoSize = true, Font = new Font("Segoe UI", 9.5F) };
+            lblPOSChange = new Label { Text = "0 đ", Location = new Point(160, y), AutoSize = true, Font = new Font("Segoe UI", 10.5F, FontStyle.Bold), ForeColor = Color.FromArgb(39, 174, 96) };
+
+            y += 30;
+            var lblT7 = new Label { Text = "Ghi chú:", Location = new Point(15, y), AutoSize = true, Font = new Font("Segoe UI", 9F) };
+            txtPOSNote = new TextBox { Location = new Point(80, y - 2), Size = new Size(240, 24), Font = new Font("Segoe UI", 9F) };
+
+            y += 35;
+            btnPOSCheckout = new Button
+            {
+                Text = "💰 THANH TOÁN (LƯU ĐƠN)",
+                Location = new Point(15, y),
+                Size = new Size(210, 42),
+                BackColor = Color.FromArgb(211, 84, 0),
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            btnPOSCheckout.FlatAppearance.BorderSize = 0;
+            btnPOSCheckout.Click += (s, e) => ProcessPOSCheckout();
+
+            btnPOSClear = new Button
+            {
+                Text = "❌ Hủy Giỏ",
+                Location = new Point(235, y),
+                Size = new Size(95, 42),
+                BackColor = Color.FromArgb(149, 165, 166),
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 9.5F),
+                FlatStyle = FlatStyle.Flat,
+                Cursor = Cursors.Hand
+            };
+            btnPOSClear.FlatAppearance.BorderSize = 0;
+            btnPOSClear.Click += (s, e) => ClearPOSCart();
+
+            pnlCheckout.Controls.AddRange(new Control[]
+            {
+                lblT1, lblPOSTotal, lblT2, numPOSDiscount, lblT3, lblPOSFinal,
+                lblT4, cboPOSPaymentMethod, lblT5, txtPOSCustomerMoney, lblT6, lblPOSChange,
+                lblT7, txtPOSNote, btnPOSCheckout, btnPOSClear
+            });
+
+            groupCart.Controls.Add(dgvPOSCart);
+            groupCart.Controls.Add(pnlCheckout);
+        }
+
+        private void LoadPOSCategories()
+        {
+            try
+            {
+                // Use database table dbo.DanhMuc (MaDanhMuc, TenDanhMuc)
+                string query = "SELECT MaDanhMuc AS CategoryID, TenDanhMuc AS CategoryName FROM dbo.DanhMuc WHERE DangHoatDong = 1 ORDER BY MaDanhMuc";
+                DataTable dt = DatabaseHelper.ExecuteQuery(query);
+                var row = dt.NewRow();
+                row["CategoryID"] = 0;
+                row["CategoryName"] = "--- Tất cả danh mục ---";
+                dt.Rows.InsertAt(row, 0);
+
+                cboPOSCategory.DataSource = dt;
+                cboPOSCategory.DisplayMember = "CategoryName";
+                cboPOSCategory.ValueMember = "CategoryID";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Lỗi tải danh mục: " + ex.Message, "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void LoadPOSProducts()
+        {
+            try
+            {
+                int catId = 0;
+                if (cboPOSCategory.SelectedValue != null && int.TryParse(cboPOSCategory.SelectedValue.ToString(), out int val))
+                {
+                    catId = val;
+                }
+
+                string search = txtPOSSearch.Text.Trim();
+
+                // Query SanPham and join DanhMuc, DonVi and SanPham_ChiNhanh for branch price
+                string query = @"
+                    SELECT sp.MaSanPham AS ProductID,
+                           sp.MaSKU AS [Mã Món],
+                           sp.TenSanPham AS [Tên Món],
+                           dm.TenDanhMuc AS [Danh Mục],
+                           ISNULL(spcn.GiaBan, 0) AS [Giá Bán (VNĐ)],
+                           dv.TenDonVi AS [ĐVT]
+                    FROM dbo.SanPham sp
+                    JOIN dbo.DanhMuc dm ON sp.MaDanhMuc = dm.MaDanhMuc
+                    JOIN dbo.DonVi dv ON sp.MaDonViBan = dv.MaDonVi
+                    LEFT JOIN dbo.SanPham_ChiNhanh spcn ON sp.MaSanPham = spcn.MaSanPham AND spcn.MaChiNhanh = @MaChiNhanh
+                    WHERE sp.DangHoatDong = 1";
+
+                var parameters = new List<SqlParameter>
+                {
+                    new SqlParameter("@MaChiNhanh", System.Data.SqlDbType.Int) { Value = UserSession.MaChiNhanh }
+                };
+
+                if (catId > 0)
+                {
+                    query += " AND sp.MaDanhMuc = @CatID";
+                    parameters.Add(new SqlParameter("@CatID", System.Data.SqlDbType.Int) { Value = catId });
+                }
+
+                if (!string.IsNullOrEmpty(search))
+                {
+                    query += " AND (sp.TenSanPham LIKE @Search OR sp.MaSKU LIKE @Search)";
+                    parameters.Add(new SqlParameter("@Search", System.Data.SqlDbType.NVarChar, 200) { Value = "%" + search + "%" });
+                }
+
+                query += " ORDER BY sp.MaSanPham";
+
+                DataTable dt = DatabaseHelper.ExecuteQuery(query, parameters.ToArray());
+                dgvPOSMenu.DataSource = dt;
+                if (dgvPOSMenu.Columns["ProductID"] != null)
+                    dgvPOSMenu.Columns["ProductID"].Visible = false;
+
+                if (dgvPOSMenu.Columns["Giá Bán (VNĐ)"] != null)
+                    dgvPOSMenu.Columns["Giá Bán (VNĐ)"].DefaultCellStyle.Format = "N0";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Lỗi tải thực đơn: " + ex.Message, "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void AddSelectedProductToCart()
+        {
+            if (dgvPOSMenu.CurrentRow == null) return;
+
+            int productId = Convert.ToInt32(dgvPOSMenu.CurrentRow.Cells["ProductID"].Value);
+            string code = dgvPOSMenu.CurrentRow.Cells["Mã Món"].Value.ToString() ?? "";
+            string name = dgvPOSMenu.CurrentRow.Cells["Tên Món"].Value.ToString() ?? "";
+            decimal price = Convert.ToDecimal(dgvPOSMenu.CurrentRow.Cells["Giá Bán (VNĐ)"].Value);
+
+            // Kiểm tra món đã có trong giỏ hàng chưa
+            DataRow[] existing = _cartTable.Select("ProductID = " + productId);
+            if (existing.Length > 0)
+            {
+                existing[0]["Quantity"] = Convert.ToDecimal(existing[0]["Quantity"]) + 1;
+                existing[0]["TotalAmount"] = Convert.ToDecimal(existing[0]["Quantity"]) * price;
+            }
+            else
+            {
+                var newRow = _cartTable.NewRow();
+                newRow["ProductID"] = productId;
+                newRow["ProductCode"] = code;
+                newRow["ProductName"] = name;
+                newRow["UnitPrice"] = price;
+                newRow["Quantity"] = 1;
+                newRow["TotalAmount"] = price;
+                _cartTable.Rows.Add(newRow);
+            }
+
+            RecalculateCart();
+        }
+
+        private decimal _totalOrderAmount = 0;
+        private decimal _finalOrderAmount = 0;
+
+        private void RecalculateCart()
+        {
+            _totalOrderAmount = 0;
+            foreach (DataRow row in _cartTable.Rows)
+            {
+                decimal qty = Convert.ToDecimal(row["Quantity"]);
+                decimal price = Convert.ToDecimal(row["UnitPrice"]);
+                row["TotalAmount"] = qty * price;
+                _totalOrderAmount += qty * price;
+            }
+
+            lblPOSTotal.Text = _totalOrderAmount.ToString("N0", _vnCulture) + " đ";
+
+            decimal discount = numPOSDiscount.Value;
+            _finalOrderAmount = Math.Max(0, _totalOrderAmount - discount);
+            lblPOSFinal.Text = _finalOrderAmount.ToString("N0", _vnCulture) + " đ";
+
+            CalculateChangeMoney();
+        }
+
+        private void CalculateChangeMoney()
+        {
+            if (decimal.TryParse(txtPOSCustomerMoney.Text.Replace(",", "").Replace(".", "").Trim(), out decimal customerMoney))
+            {
+                decimal change = customerMoney - _finalOrderAmount;
+                if (change >= 0)
+                {
+                    lblPOSChange.Text = change.ToString("N0", _vnCulture) + " đ";
+                    lblPOSChange.ForeColor = Color.FromArgb(39, 174, 96);
+                }
+                else
+                {
+                    lblPOSChange.Text = "Thiếu: " + Math.Abs(change).ToString("N0", _vnCulture) + " đ";
+                    lblPOSChange.ForeColor = Color.FromArgb(192, 57, 43);
+                }
+            }
+            else
+            {
+                lblPOSChange.Text = "0 đ";
+            }
+        }
+
+        private void ClearPOSCart()
+        {
+            _cartTable.Rows.Clear();
+            numPOSDiscount.Value = 0;
+            txtPOSCustomerMoney.Clear();
+            txtPOSNote.Clear();
+            RecalculateCart();
+        }
+
+        private void ProcessPOSCheckout()
+        {
+            if (_cartTable.Rows.Count == 0)
+            {
+                MessageBox.Show("Giỏ hàng đang trống! Vui lòng chọn món trước khi thanh toán.", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            string orderCode = "HD" + DateTime.Now.ToString("yyyyMMddHHmmss");
+            decimal subTotal = _totalOrderAmount;
+            decimal discount = numPOSDiscount.Value;
+            decimal totalAmount = _finalOrderAmount;
+            string paymentMethod = cboPOSPaymentMethod.SelectedIndex == 1 ? "BANK_TRANSFER" : "CASH";
+            string note = txtPOSNote.Text.Trim();
+
+            try
+            {
+                using var conn = DatabaseHelper.GetConnection();
+                conn.Open();
+                using var transaction = conn.BeginTransaction();
+
+                // 1. Insert HoaDon
+                string insertHoaDonSql = @"
+                    INSERT INTO dbo.HoaDon (MaDonLocal, MaChiNhanh, MaThuNgan, NguonDon, LoaiDon, TongTienHang, TienGiam, PhiShip, TongThanhToan, TrangThaiDon, TrangThaiThanhToan)
+                    VALUES (@MaDonLocal, @MaChiNhanh, @MaThuNgan, @NguonDon, @LoaiDon, @TongTienHang, @TienGiam, @PhiShip, @TongThanhToan, @TrangThaiDon, @TrangThaiThanhToan);
+                    SELECT SCOPE_IDENTITY();";
+
+                var hdParams = new SqlParameter[]
+                {
+                    new SqlParameter("@MaDonLocal", System.Data.SqlDbType.NVarChar, 50) { Value = orderCode },
+                    new SqlParameter("@MaChiNhanh", System.Data.SqlDbType.Int) { Value = UserSession.MaChiNhanh },
+                    new SqlParameter("@MaThuNgan", System.Data.SqlDbType.Int) { Value = UserSession.MaNhanVien },
+                    new SqlParameter("@NguonDon", System.Data.SqlDbType.NVarChar, 30) { Value = "POS" },
+                    new SqlParameter("@LoaiDon", System.Data.SqlDbType.NVarChar, 20) { Value = "TaiQuay" },
+                    new SqlParameter("@TongTienHang", System.Data.SqlDbType.Decimal) { Value = subTotal },
+                    new SqlParameter("@TienGiam", System.Data.SqlDbType.Decimal) { Value = discount },
+                    new SqlParameter("@PhiShip", System.Data.SqlDbType.Decimal) { Value = 0m },
+                    new SqlParameter("@TongThanhToan", System.Data.SqlDbType.Decimal) { Value = totalAmount },
+                    new SqlParameter("@TrangThaiDon", System.Data.SqlDbType.NVarChar, 20) { Value = "XacNhan" },
+                    new SqlParameter("@TrangThaiThanhToan", System.Data.SqlDbType.NVarChar, 20) { Value = "DaTT" }
+                };
+
+                int maHoaDon = Convert.ToInt32(DatabaseHelper.ExecuteScalar(insertHoaDonSql, hdParams, conn, transaction));
+
+                // 2. Insert ChiTiet_HoaDon
+                foreach (DataRow row in _cartTable.Rows)
+                {
+                    int maSanPham = Convert.ToInt32(row["ProductID"]);
+                    string tenSanPham = row["ProductName"].ToString() ?? string.Empty;
+                    decimal qty = Convert.ToDecimal(row["Quantity"]);
+                    decimal unitPrice = Convert.ToDecimal(row["UnitPrice"]);
+                    decimal thanhTien = qty * unitPrice;
+
+                    string insertCTSql = @"
+                        INSERT INTO dbo.ChiTiet_HoaDon (MaHoaDon, MaSanPham, TenSanPhamChup, SoLuong, DonGia, GiamDong, ThanhTien)
+                        VALUES (@MaHoaDon, @MaSanPham, @TenSanPhamChup, @SoLuong, @DonGia, 0, @ThanhTien);";
+
+                    var ctParams = new SqlParameter[]
+                    {
+                        new SqlParameter("@MaHoaDon", System.Data.SqlDbType.Int) { Value = maHoaDon },
+                        new SqlParameter("@MaSanPham", System.Data.SqlDbType.Int) { Value = maSanPham },
+                        new SqlParameter("@TenSanPhamChup", System.Data.SqlDbType.NVarChar, 200) { Value = tenSanPham },
+                        new SqlParameter("@SoLuong", System.Data.SqlDbType.Decimal) { Value = qty },
+                        new SqlParameter("@DonGia", System.Data.SqlDbType.Decimal) { Value = unitPrice },
+                        new SqlParameter("@ThanhTien", System.Data.SqlDbType.Decimal) { Value = thanhTien }
+                    };
+
+                    DatabaseHelper.ExecuteNonQuery(insertCTSql, ctParams, conn, transaction);
+
+                    // 3. For each product, deduct ingredients according to CongThuc
+                    string congThucSql = "SELECT MaNguyenLieu, SoLuongTrenMotPhan FROM dbo.CongThuc WHERE MaSanPham = @MaSanPham";
+                    var ctqParams = new SqlParameter[] { new SqlParameter("@MaSanPham", System.Data.SqlDbType.Int) { Value = maSanPham } };
+                    DataTable dtCongThuc = DatabaseHelper.ExecuteQuery(congThucSql, ctqParams, conn, transaction);
+
+                    foreach (DataRow ctRow in dtCongThuc.Rows)
+                    {
+                        int maNguyenLieu = Convert.ToInt32(ctRow["MaNguyenLieu"]);
+                        decimal soLuongTrenMotPhan = Convert.ToDecimal(ctRow["SoLuongTrenMotPhan"]);
+                        decimal required = Math.Round(soLuongTrenMotPhan * qty, 3);
+
+                        // Get current stock
+                        string selTonSql = "SELECT SoLuongTon FROM dbo.TonKho_ChiNhanh WHERE MaChiNhanh = @MaChiNhanh AND MaNguyenLieu = @MaNguyenLieu";
+                        var tonParams = new SqlParameter[]
+                        {
+                            new SqlParameter("@MaChiNhanh", System.Data.SqlDbType.Int) { Value = UserSession.MaChiNhanh },
+                            new SqlParameter("@MaNguyenLieu", System.Data.SqlDbType.Int) { Value = maNguyenLieu }
+                        };
+
+                        object? tonObj = DatabaseHelper.ExecuteScalar(selTonSql, tonParams, conn, transaction);
+                        decimal currentTon = tonObj == null || tonObj == DBNull.Value ? 0m : Convert.ToDecimal(tonObj);
+
+                        if (currentTon < required)
+                        {
+                            // Get ingredient name for better message
+                            string nameSql = "SELECT TenNguyenLieu FROM dbo.NguyenLieu WHERE MaNguyenLieu = @MaNguyenLieu";
+                            var nameObj = DatabaseHelper.ExecuteScalar(nameSql, new SqlParameter[] { new SqlParameter("@MaNguyenLieu", System.Data.SqlDbType.Int) { Value = maNguyenLieu } }, conn, transaction);
+                            string ingName = nameObj == null || nameObj == DBNull.Value ? ("ID=" + maNguyenLieu) : nameObj.ToString() ?? ("ID=" + maNguyenLieu);
+
+                            throw new Exception($"Nguyên liệu '{ingName}' trong kho không đủ. Cần {required.ToString("N3", _vnCulture)} nhưng chỉ còn {currentTon.ToString("N3", _vnCulture)}.");
+                        }
+
+                        // Update TonKho_ChiNhanh
+                        string updTonSql = @"UPDATE dbo.TonKho_ChiNhanh SET SoLuongTon = SoLuongTon - @Delta, NgayCapNhat = SYSUTCDATETIME()
+                                            WHERE MaChiNhanh = @MaChiNhanh AND MaNguyenLieu = @MaNguyenLieu";
+                        var updParams = new SqlParameter[]
+                        {
+                            new SqlParameter("@Delta", System.Data.SqlDbType.Decimal) { Value = required },
+                            new SqlParameter("@MaChiNhanh", System.Data.SqlDbType.Int) { Value = UserSession.MaChiNhanh },
+                            new SqlParameter("@MaNguyenLieu", System.Data.SqlDbType.Int) { Value = maNguyenLieu }
+                        };
+
+                        DatabaseHelper.ExecuteNonQuery(updTonSql, updParams, conn, transaction);
+
+                        decimal tonSau = currentTon - required;
+
+                        // Insert NhatKy_Kho
+                        string insNKSql = @"INSERT INTO dbo.NhatKy_Kho (MaChiNhanh, MaNguyenLieu, LoaiGiaoDich, SoLuongThayDoi, TonSau, MaNhanVien, LoaiThamChieu, MaThamChieu, GhiChu)
+                                            VALUES (@MaChiNhanh, @MaNguyenLieu, @LoaiGiaoDich, @SoLuongThayDoi, @TonSau, @MaNhanVien, @LoaiThamChieu, @MaThamChieu, @GhiChu)";
+                        var nkParams = new SqlParameter[]
+                        {
+                            new SqlParameter("@MaChiNhanh", System.Data.SqlDbType.Int) { Value = UserSession.MaChiNhanh },
+                            new SqlParameter("@MaNguyenLieu", System.Data.SqlDbType.Int) { Value = maNguyenLieu },
+                            new SqlParameter("@LoaiGiaoDich", System.Data.SqlDbType.NVarChar, 30) { Value = "XUAT_BAN" },
+                            new SqlParameter("@SoLuongThayDoi", System.Data.SqlDbType.Decimal) { Value = -required },
+                            new SqlParameter("@TonSau", System.Data.SqlDbType.Decimal) { Value = tonSau },
+                            new SqlParameter("@MaNhanVien", System.Data.SqlDbType.Int) { Value = UserSession.MaNhanVien },
+                            new SqlParameter("@LoaiThamChieu", System.Data.SqlDbType.NVarChar, 30) { Value = "HOADON" },
+                            new SqlParameter("@MaThamChieu", System.Data.SqlDbType.Int) { Value = maHoaDon },
+                            new SqlParameter("@GhiChu", System.Data.SqlDbType.NVarChar, 255) { Value = string.IsNullOrEmpty(note) ? (object)DBNull.Value : note }
+                        };
+
+                        DatabaseHelper.ExecuteNonQuery(insNKSql, nkParams, conn, transaction);
+                    }
+                }
+
+                // 4. Insert ThanhToan_HoaDon
+                string insertTTSql = @"INSERT INTO dbo.ThanhToan_HoaDon (MaHoaDon, HinhThuc, SoTien, MaThamChieu, NguoiThu) VALUES (@MaHoaDon, @HinhThuc, @SoTien, @MaThamChieu, @NguoiThu)";
+                var ttParams = new SqlParameter[]
+                {
+                    new SqlParameter("@MaHoaDon", System.Data.SqlDbType.Int) { Value = maHoaDon },
+                    new SqlParameter("@HinhThuc", System.Data.SqlDbType.NVarChar, 30) { Value = paymentMethod },
+                    new SqlParameter("@SoTien", System.Data.SqlDbType.Decimal) { Value = totalAmount },
+                    new SqlParameter("@MaThamChieu", System.Data.SqlDbType.NVarChar, 100) { Value = DBNull.Value },
+                    new SqlParameter("@NguoiThu", System.Data.SqlDbType.Int) { Value = UserSession.MaNhanVien }
+                };
+
+                DatabaseHelper.ExecuteNonQuery(insertTTSql, ttParams, conn, transaction);
+
+                // Commit all
+                transaction.Commit();
+
+                string msg = "Thanh toán thành công!\n\nMã hóa đơn: " + orderCode + "\nTổng tiền: " + totalAmount.ToString("N0", _vnCulture) + " đ\nTồn kho nguyên liệu đã được cập nhật.";
+                MessageBox.Show(msg, "Thành công", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                ClearPOSCart();
+                LoadIngredientsTab(); // refresh stock
+                LoadReportsTab();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Lỗi khi thanh toán đơn hàng:\n" + ex.Message, "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        #endregion
+
+        #region ======================== 2. MODULE QUẢN LÝ THỰC ĐƠN ========================
+
+        private DataGridView dgvProducts = null!;
+        private TextBox txtProdCode = null!;
+        private TextBox txtProdName = null!;
+        private ComboBox cboProdCategory = null!;
+        private NumericUpDown numProdPrice = null!;
+        private TextBox txtProdUnit = null!;
+        private CheckBox chkProdActive = null!;
+        private int _selectedProductID = 0;
+
+        private void InitializeProductsTab()
+        {
+            tabProducts.BackColor = Color.FromArgb(245, 246, 250);
+
+            var split = new SplitContainer { Dock = DockStyle.Fill, SplitterDistance = 780 };
+            tabProducts.Controls.Add(split);
+
+            // Trái: Bảng danh sách
+            var grpList = new GroupBox
+            {
+                Text = "DANH SÁCH MÓN ĂN & NƯỚC UỐNG",
+                Dock = DockStyle.Fill,
+                Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
+                Padding = new Padding(10)
+            };
+            split.Panel1.Controls.Add(grpList);
+
+            dgvProducts = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+                BackgroundColor = Color.White,
+                Font = new Font("Segoe UI", 9.5F)
+            };
+            dgvProducts.CellClick += (s, e) => BindProductToForm();
+            grpList.Controls.Add(dgvProducts);
+
+            // Phải: Form thông tin
+            var grpForm = new GroupBox
+            {
+                Text = "THÔNG TIN SẢN PHẨM",
+                Dock = DockStyle.Fill,
+                Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
+                Padding = new Padding(15)
+            };
+            split.Panel2.Controls.Add(grpForm);
+
+            int y = 30;
+            var l1 = new Label { Text = "Mã sản phẩm:", Location = new Point(20, y), AutoSize = true, Font = new Font("Segoe UI", 9.5F) };
+            txtProdCode = new TextBox { Location = new Point(20, y + 22), Size = new Size(280, 26), Font = new Font("Segoe UI", 9.5F) };
+
+            y += 60;
+            var l2 = new Label { Text = "Tên món:", Location = new Point(20, y), AutoSize = true, Font = new Font("Segoe UI", 9.5F) };
+            txtProdName = new TextBox { Location = new Point(20, y + 22), Size = new Size(280, 26), Font = new Font("Segoe UI", 9.5F) };
+
+            y += 60;
+            var l3 = new Label { Text = "Danh mục:", Location = new Point(20, y), AutoSize = true, Font = new Font("Segoe UI", 9.5F) };
+            cboProdCategory = new ComboBox { Location = new Point(20, y + 22), Size = new Size(280, 26), DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font("Segoe UI", 9.5F) };
+
+            y += 60;
+            var l4 = new Label { Text = "Giá bán (VNĐ):", Location = new Point(20, y), AutoSize = true, Font = new Font("Segoe UI", 9.5F) };
+            numProdPrice = new NumericUpDown { Location = new Point(20, y + 22), Size = new Size(280, 26), Maximum = 10000000, Increment = 1000, Font = new Font("Segoe UI", 9.5F) };
+
+            y += 60;
+            var l5 = new Label { Text = "Đơn vị tính (Ổ, Ly, Chai...):", Location = new Point(20, y), AutoSize = true, Font = new Font("Segoe UI", 9.5F) };
+            txtProdUnit = new TextBox { Location = new Point(20, y + 22), Size = new Size(280, 26), Font = new Font("Segoe UI", 9.5F), Text = "Ổ" };
+
+            y += 55;
+            chkProdActive = new CheckBox { Text = "Đang kinh doanh", Location = new Point(20, y), AutoSize = true, Checked = true, Font = new Font("Segoe UI", 9.5F) };
+
+            y += 40;
+            var btnAdd = new Button { Text = "➕ Thêm Mới", Location = new Point(20, y), Size = new Size(130, 36), BackColor = Color.FromArgb(39, 174, 96), ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9.5F, FontStyle.Bold) };
+            btnAdd.FlatAppearance.BorderSize = 0;
+            btnAdd.Click += (s, e) => SaveProduct(isNew: true);
+
+            var btnEdit = new Button { Text = "✏️ Cập Nhật", Location = new Point(160, y), Size = new Size(140, 36), BackColor = Color.FromArgb(41, 128, 185), ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9.5F, FontStyle.Bold) };
+            btnEdit.FlatAppearance.BorderSize = 0;
+            btnEdit.Click += (s, e) => SaveProduct(isNew: false);
+
+            y += 45;
+            var btnDelete = new Button { Text = "🗑️ Xóa Món", Location = new Point(20, y), Size = new Size(130, 36), BackColor = Color.FromArgb(192, 57, 43), ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9.5F, FontStyle.Bold) };
+            btnDelete.FlatAppearance.BorderSize = 0;
+            btnDelete.Click += (s, e) => DeleteProduct();
+
+            var btnReset = new Button { Text = "🔄 Làm Mới", Location = new Point(160, y), Size = new Size(140, 36), BackColor = Color.FromArgb(149, 165, 166), ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9.5F) };
+            btnReset.FlatAppearance.BorderSize = 0;
+            btnReset.Click += (s, e) => ResetProductForm();
+
+            grpForm.Controls.AddRange(new Control[]
+            {
+                l1, txtProdCode, l2, txtProdName, l3, cboProdCategory,
+                l4, numProdPrice, l5, txtProdUnit, chkProdActive,
+                btnAdd, btnEdit, btnDelete, btnReset
+            });
+        }
+
+        private void LoadProductsTab()
+        {
+            try
+            {
+                // Danh mục
+                string queryCat = "SELECT CategoryID, CategoryName FROM dbo.Categories WHERE IsActive = 1";
+                DataTable dtCat = DatabaseHelper.ExecuteQuery(queryCat);
+                cboProdCategory.DataSource = dtCat;
+                cboProdCategory.DisplayMember = "CategoryName";
+                cboProdCategory.ValueMember = "CategoryID";
+
+                // Sản phẩm
+                string queryProd = @"
+                    SELECT p.ProductID, p.ProductCode AS [Mã Món], p.ProductName AS [Tên Món],
+                           c.CategoryName AS [Danh Mục], p.SellingPrice AS [Giá Bán (VNĐ)], 
+                           p.Unit AS [ĐVT], p.IsActive AS [Hoạt Động], p.CategoryID
+                    FROM dbo.Products p
+                    JOIN dbo.Categories c ON p.CategoryID = c.CategoryID
+                    ORDER BY p.ProductID";
+
+                DataTable dtProd = DatabaseHelper.ExecuteQuery(queryProd);
+                dgvProducts.DataSource = dtProd;
+                if (dgvProducts.Columns["ProductID"] != null) dgvProducts.Columns["ProductID"].Visible = false;
+                if (dgvProducts.Columns["CategoryID"] != null) dgvProducts.Columns["CategoryID"].Visible = false;
+                if (dgvProducts.Columns["Giá Bán (VNĐ)"] != null) dgvProducts.Columns["Giá Bán (VNĐ)"].DefaultCellStyle.Format = "N0";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Lỗi tải sản phẩm: " + ex.Message, "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void BindProductToForm()
+        {
+            if (dgvProducts.CurrentRow == null) return;
+            var row = dgvProducts.CurrentRow;
+            _selectedProductID = Convert.ToInt32(row.Cells["ProductID"].Value);
+            txtProdCode.Text = row.Cells["Mã Món"].Value.ToString();
+            txtProdName.Text = row.Cells["Tên Món"].Value.ToString();
+            cboProdCategory.SelectedValue = row.Cells["CategoryID"].Value;
+            numProdPrice.Value = Convert.ToDecimal(row.Cells["Giá Bán (VNĐ)"].Value);
+            txtProdUnit.Text = row.Cells["ĐVT"].Value.ToString();
+            chkProdActive.Checked = Convert.ToBoolean(row.Cells["Hoạt Động"].Value);
+        }
+
+        private void ResetProductForm()
+        {
+            _selectedProductID = 0;
+            txtProdCode.Clear();
+            txtProdName.Clear();
+            numProdPrice.Value = 0;
+            txtProdUnit.Text = "Ổ";
+            chkProdActive.Checked = true;
+        }
+
+        private void SaveProduct(bool isNew)
+        {
+            string code = txtProdCode.Text.Trim();
+            string name = txtProdName.Text.Trim();
+            if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(name))
+            {
+                MessageBox.Show("Vui lòng nhập Mã món và Tên món!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            int catId = Convert.ToInt32(cboProdCategory.SelectedValue);
+            decimal price = numProdPrice.Value;
+            string unit = txtProdUnit.Text.Trim();
+            bool isActive = chkProdActive.Checked;
+
+            try
+            {
+                if (isNew)
+                {
+                    string sql = @"
+                        INSERT INTO dbo.Products (ProductCode, ProductName, CategoryID, SellingPrice, Unit, IsActive)
+                        VALUES (@Code, @Name, @CatID, @Price, @Unit, @IsActive)";
+                    var p = new SqlParameter[]
+                    {
+                        new SqlParameter("@Code", code),
+                        new SqlParameter("@Name", name),
+                        new SqlParameter("@CatID", catId),
+                        new SqlParameter("@Price", price),
+                        new SqlParameter("@Unit", unit),
+                        new SqlParameter("@IsActive", isActive)
+                    };
+                    DatabaseHelper.ExecuteNonQuery(sql, p);
+                    MessageBox.Show("Thêm món mới thành công!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                else
+                {
+                    if (_selectedProductID == 0)
+                    {
+                        MessageBox.Show("Vui lòng chọn món cần cập nhật từ bảng danh sách!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+
+                    string sql = @"
+                        UPDATE dbo.Products
+                        SET ProductCode = @Code, ProductName = @Name, CategoryID = @CatID, 
+                            SellingPrice = @Price, Unit = @Unit, IsActive = @IsActive, UpdatedAt = SYSDATETIME()
+                        WHERE ProductID = @ProductID";
+                    var p = new SqlParameter[]
+                    {
+                        new SqlParameter("@ProductID", _selectedProductID),
+                        new SqlParameter("@Code", code),
+                        new SqlParameter("@Name", name),
+                        new SqlParameter("@CatID", catId),
+                        new SqlParameter("@Price", price),
+                        new SqlParameter("@Unit", unit),
+                        new SqlParameter("@IsActive", isActive)
+                    };
+                    DatabaseHelper.ExecuteNonQuery(sql, p);
+                    MessageBox.Show("Cập nhật thông tin món thành công!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+
+                LoadProductsTab();
+                LoadPOSProducts();
+                ResetProductForm();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Lỗi lưu sản phẩm: " + ex.Message, "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void DeleteProduct()
+        {
+            if (_selectedProductID == 0)
+            {
+                MessageBox.Show("Vui lòng chọn món cần xóa!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var confirm = MessageBox.Show("Bạn có chắc muốn xóa (ngừng kinh doanh) món này không?", "Xác nhận xóa", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (confirm == DialogResult.Yes)
+            {
+                try
+                {
+                    string sql = "UPDATE dbo.Products SET IsActive = 0 WHERE ProductID = @ProductID";
+                    DatabaseHelper.ExecuteNonQuery(sql, new SqlParameter[] { new SqlParameter("@ProductID", _selectedProductID) });
+                    MessageBox.Show("Đã ngừng kinh doanh món này!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    LoadProductsTab();
+                    LoadPOSProducts();
+                    ResetProductForm();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("Lỗi: " + ex.Message, "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        #endregion
+
+        #region ======================== 3. MODULE KHO NGUYÊN LIỆU ========================
+
+        private DataGridView dgvIngredients = null!;
+        private CheckBox chkLowStockOnly = null!;
+        private TextBox txtIngCode = null!;
+        private TextBox txtIngName = null!;
+        private TextBox txtIngUnit = null!;
+        private NumericUpDown numIngCurrentStock = null!;
+        private NumericUpDown numIngMinStock = null!;
+        private NumericUpDown numIngCost = null!;
+        private int _selectedIngredientID = 0;
+
+        private void InitializeIngredientsTab()
+        {
+            tabIngredients.BackColor = Color.FromArgb(245, 246, 250);
+
+            var split = new SplitContainer { Dock = DockStyle.Fill, SplitterDistance = 780 };
+            tabIngredients.Controls.Add(split);
+
+            // Bảng danh sách
+            var grpList = new GroupBox
+            {
+                Text = "📦 DANH SÁCH NGUYÊN LIỆU TRONG KHO",
+                Dock = DockStyle.Fill,
+                Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
+                Padding = new Padding(10)
+            };
+            split.Panel1.Controls.Add(grpList);
+
+            var pnlFilter = new Panel { Dock = DockStyle.Top, Height = 40 };
+            chkLowStockOnly = new CheckBox
+            {
+                Text = "⚠️ Chỉ hiện nguyên liệu sắp hết (Cảnh báo tồn kho)",
+                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(192, 57, 43),
+                Location = new Point(10, 8),
+                AutoSize = true
+            };
+            chkLowStockOnly.CheckedChanged += (s, e) => LoadIngredientsTab();
+            pnlFilter.Controls.Add(chkLowStockOnly);
+            grpList.Controls.Add(pnlFilter);
+
+            dgvIngredients = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+                BackgroundColor = Color.White,
+                Font = new Font("Segoe UI", 9.5F)
+            };
+            dgvIngredients.CellClick += (s, e) => BindIngredientToForm();
+            grpList.Controls.Add(dgvIngredients);
+            dgvIngredients.BringToFront();
+
+            // Form cập nhật
+            var grpForm = new GroupBox
+            {
+                Text = "QUẢN LÝ NGUYÊN LIỆU",
+                Dock = DockStyle.Fill,
+                Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
+                Padding = new Padding(15)
+            };
+            split.Panel2.Controls.Add(grpForm);
+
+            int y = 30;
+            var l1 = new Label { Text = "Mã nguyên liệu:", Location = new Point(20, y), AutoSize = true, Font = new Font("Segoe UI", 9.5F) };
+            txtIngCode = new TextBox { Location = new Point(20, y + 22), Size = new Size(280, 26), Font = new Font("Segoe UI", 9.5F) };
+
+            y += 60;
+            var l2 = new Label { Text = "Tên nguyên liệu:", Location = new Point(20, y), AutoSize = true, Font = new Font("Segoe UI", 9.5F) };
+            txtIngName = new TextBox { Location = new Point(20, y + 22), Size = new Size(280, 26), Font = new Font("Segoe UI", 9.5F) };
+
+            y += 60;
+            var l3 = new Label { Text = "Đơn vị (Kg, Quả, Ổ, Hộp...):", Location = new Point(20, y), AutoSize = true, Font = new Font("Segoe UI", 9.5F) };
+            txtIngUnit = new TextBox { Location = new Point(20, y + 22), Size = new Size(280, 26), Font = new Font("Segoe UI", 9.5F) };
+
+            y += 60;
+            var l4 = new Label { Text = "Số lượng tồn kho:", Location = new Point(20, y), AutoSize = true, Font = new Font("Segoe UI", 9.5F) };
+            numIngCurrentStock = new NumericUpDown { Location = new Point(20, y + 22), Size = new Size(280, 26), Maximum = 100000, DecimalPlaces = 2, Font = new Font("Segoe UI", 9.5F) };
+
+            y += 60;
+            var l5 = new Label { Text = "Tồn kho tối thiểu:", Location = new Point(20, y), AutoSize = true, Font = new Font("Segoe UI", 9.5F) };
+            numIngMinStock = new NumericUpDown { Location = new Point(20, y + 22), Size = new Size(280, 26), Maximum = 100000, DecimalPlaces = 2, Font = new Font("Segoe UI", 9.5F) };
+
+            y += 60;
+            var l6 = new Label { Text = "Giá vốn (VNĐ):", Location = new Point(20, y), AutoSize = true, Font = new Font("Segoe UI", 9.5F) };
+            numIngCost = new NumericUpDown { Location = new Point(20, y + 22), Size = new Size(280, 26), Maximum = 10000000, Increment = 1000, Font = new Font("Segoe UI", 9.5F) };
+
+            y += 60;
+            var btnSaveIng = new Button { Text = "💾 Lưu / Cập Nhật", Location = new Point(20, y), Size = new Size(135, 36), BackColor = Color.FromArgb(41, 128, 185), ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9.5F, FontStyle.Bold) };
+            btnSaveIng.FlatAppearance.BorderSize = 0;
+            btnSaveIng.Click += (s, e) => SaveIngredient();
+
+            var btnAddStock = new Button { Text = "📥 Nhập Thêm", Location = new Point(165, y), Size = new Size(135, 36), BackColor = Color.FromArgb(39, 174, 96), ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9.5F, FontStyle.Bold) };
+            btnAddStock.FlatAppearance.BorderSize = 0;
+            btnAddStock.Click += (s, e) => QuickAddStock();
+
+            grpForm.Controls.AddRange(new Control[]
+            {
+                l1, txtIngCode, l2, txtIngName, l3, txtIngUnit,
+                l4, numIngCurrentStock, l5, numIngMinStock, l6, numIngCost,
+                btnSaveIng, btnAddStock
+            });
+        }
+
+        private void LoadIngredientsTab()
+        {
+            try
+            {
+                string query;
+                if (chkLowStockOnly.Checked)
+                {
+                    query = @"
+                        SELECT nl.MaNguyenLieu AS IngredientID, nl.MaNguyenLieu AS [Mã NL], nl.TenNguyenLieu AS [Tên Nguyên Liệu],
+                               dv.TenDonVi AS [ĐVT], ISNULL(tk.SoLuongTon,0) AS [Tồn Kho], nl.TonToiThieuCanhBao AS [Tồn Tối Thiểu], 0 AS [Giá Vốn]
+                        FROM dbo.NguyenLieu nl
+                        LEFT JOIN dbo.DonVi dv ON nl.MaDonViGoc = dv.MaDonVi
+                        LEFT JOIN dbo.TonKho_ChiNhanh tk ON nl.MaNguyenLieu = tk.MaNguyenLieu AND tk.MaChiNhanh = @MaChiNhanh
+                        WHERE ISNULL(tk.SoLuongTon,0) <= ISNULL(nl.TonToiThieuCanhBao,0) AND nl.DangHoatDong = 1
+                        ORDER BY [Tồn Kho] ASC";
+                    var pLow = new SqlParameter[] { new SqlParameter("@MaChiNhanh", UserSession.MaChiNhanh) };
+                    DataTable dt = DatabaseHelper.ExecuteQuery(query, pLow);
+                    dgvIngredients.DataSource = dt;
+                    if (dgvIngredients.Columns["IngredientID"] != null)
+                        dgvIngredients.Columns["IngredientID"].Visible = false;
+
+                    if (dgvIngredients.Columns["Giá Vốn"] != null)
+                        dgvIngredients.Columns["Giá Vốn"].DefaultCellStyle.Format = "N0";
+                    return;
+                }
+
+                query = @"
+                        SELECT nl.MaNguyenLieu AS IngredientID, nl.MaNguyenLieu AS [Mã NL], nl.TenNguyenLieu AS [Tên Nguyên Liệu],
+                               dv.TenDonVi AS [ĐVT], ISNULL(tk.SoLuongTon,0) AS [Tồn Kho], nl.TonToiThieuCanhBao AS [Tồn Tối Thiểu], 0 AS [Giá Vốn]
+                        FROM dbo.NguyenLieu nl
+                        LEFT JOIN dbo.DonVi dv ON nl.MaDonViGoc = dv.MaDonVi
+                        LEFT JOIN dbo.TonKho_ChiNhanh tk ON nl.MaNguyenLieu = tk.MaNguyenLieu AND tk.MaChiNhanh = @MaChiNhanh
+                        WHERE nl.DangHoatDong = 1
+                        ORDER BY nl.MaNguyenLieu";
+
+                var p = new SqlParameter[] { new SqlParameter("@MaChiNhanh", UserSession.MaChiNhanh) };
+                DataTable dt = DatabaseHelper.ExecuteQuery(query, p);
+                dgvIngredients.DataSource = dt;
+                if (dgvIngredients.Columns["IngredientID"] != null)
+                    dgvIngredients.Columns["IngredientID"].Visible = false;
+
+                if (dgvIngredients.Columns["Giá Vốn"] != null)
+                    dgvIngredients.Columns["Giá Vốn"].DefaultCellStyle.Format = "N0";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Lỗi tải kho nguyên liệu: " + ex.Message, "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void BindIngredientToForm()
+        {
+            if (dgvIngredients.CurrentRow == null) return;
+            var row = dgvIngredients.CurrentRow;
+            _selectedIngredientID = Convert.ToInt32(row.Cells["IngredientID"].Value);
+            // NguyenLieu has no separate code column in new DB; use MaNguyenLieu as code
+            txtIngCode.Text = row.Cells["Mã NL"].Value.ToString();
+            txtIngName.Text = row.Cells["Tên Nguyên Liệu"].Value.ToString();
+            txtIngUnit.Text = row.Cells["ĐVT"].Value.ToString();
+            numIngCurrentStock.Value = Convert.ToDecimal(row.Cells["Tồn Kho"].Value);
+            numIngMinStock.Value = Convert.ToDecimal(row.Cells["Tồn Tối Thiểu"].Value);
+            // Giá Vốn not available in schema; keep 0 default
+            numIngCost.Value = 0;
+        }
+
+        private void SaveIngredient()
+        {
+            string code = txtIngCode.Text.Trim();
+            string name = txtIngName.Text.Trim();
+            if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(name))
+            {
+                MessageBox.Show("Vui lòng nhập Mã và Tên nguyên liệu!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            try
+            {
+                // In the new DB NguyenLieu and TonKho_ChiNhanh separate master and stock per branch.
+                // We'll update NguyenLieu (TenNguyenLieu, MaDonViGoc, TonToiThieuCanhBao, DangHoatDong) and upsert TonKho_ChiNhanh for stock.
+                if (_selectedIngredientID > 0)
+                {
+                    string updateNl = @"UPDATE dbo.NguyenLieu SET TenNguyenLieu = @Name, MaDonViGoc = @MaDonVi, TonToiThieuCanhBao = @Min WHERE MaNguyenLieu = @ID";
+                    var pNl = new SqlParameter[]
+                    {
+                        new SqlParameter("@ID", _selectedIngredientID),
+                        new SqlParameter("@Name", name),
+                        new SqlParameter("@MaDonVi", txtIngUnit.Text.Trim()),
+                        new SqlParameter("@Min", numIngMinStock.Value)
+                    };
+
+                    DatabaseHelper.ExecuteNonQuery(updateNl, pNl);
+
+                    // Upsert TonKho_ChiNhanh
+                    string upsertStock = @"
+IF EXISTS (SELECT 1 FROM dbo.TonKho_ChiNhanh WHERE MaChiNhanh = @MaChiNhanh AND MaNguyenLieu = @ID)
+    UPDATE dbo.TonKho_ChiNhanh SET SoLuongTon = @Current WHERE MaChiNhanh = @MaChiNhanh AND MaNguyenLieu = @ID
+ELSE
+    INSERT INTO dbo.TonKho_ChiNhanh (MaChiNhanh, MaNguyenLieu, SoLuongTon) VALUES (@MaChiNhanh, @ID, @Current)";
+                    var pStock = new SqlParameter[]
+                    {
+                        new SqlParameter("@MaChiNhanh", UserSession.MaChiNhanh),
+                        new SqlParameter("@ID", _selectedIngredientID),
+                        new SqlParameter("@Current", numIngCurrentStock.Value)
+                    };
+                    DatabaseHelper.ExecuteNonQuery(upsertStock, pStock);
+
+                    MessageBox.Show("Cập nhật nguyên liệu thành công!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                else
+                {
+                    // Insert new NguyenLieu and its stock
+                    string insertNl = @"INSERT INTO dbo.NguyenLieu (TenNguyenLieu, MaDonViGoc, TonToiThieuCanhBao, DangHoatDong) VALUES (@Name, @MaDonVi, @Min, 1); SELECT SCOPE_IDENTITY();";
+                    var pNl = new SqlParameter[]
+                    {
+                        new SqlParameter("@Name", name),
+                        new SqlParameter("@MaDonVi", txtIngUnit.Text.Trim()),
+                        new SqlParameter("@Min", numIngMinStock.Value)
+                    };
+                    object newIdObj = DatabaseHelper.ExecuteScalar(insertNl, pNl);
+                    int newId = Convert.ToInt32(newIdObj);
+
+                    string insertStock = @"INSERT INTO dbo.TonKho_ChiNhanh (MaChiNhanh, MaNguyenLieu, SoLuongTon) VALUES (@MaChiNhanh, @ID, @Current)";
+                    var pStock = new SqlParameter[]
+                    {
+                        new SqlParameter("@MaChiNhanh", UserSession.MaChiNhanh),
+                        new SqlParameter("@ID", newId),
+                        new SqlParameter("@Current", numIngCurrentStock.Value)
+                    };
+                    DatabaseHelper.ExecuteNonQuery(insertStock, pStock);
+
+                    MessageBox.Show("Thêm nguyên liệu mới thành công!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+
+                LoadIngredientsTab();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Lỗi lưu nguyên liệu: " + ex.Message, "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void QuickAddStock()
+        {
+            if (_selectedIngredientID == 0)
+            {
+                MessageBox.Show("Vui lòng chọn nguyên liệu cần nhập thêm!", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            numIngCurrentStock.Value += 10;
+            SaveIngredient();
+        }
+
+        #endregion
+
+        #region ======================== 4. MODULE BÁO CÁO DOANH THU ========================
+
+        private DataGridView dgvDailyRevenue = null!;
+        private DataGridView dgvTopProducts = null!;
+        private Label lblReportTotalRev = null!;
+        private Label lblReportTotalOrders = null!;
+
+        private void InitializeReportsTab()
+        {
+            tabReports.BackColor = Color.FromArgb(245, 246, 250);
+
+            var pnlTopCards = new Panel { Dock = DockStyle.Top, Height = 90, Padding = new Padding(15) };
+            tabReports.Controls.Add(pnlTopCards);
+
+            // Card 1: Tổng doanh thu
+            var card1 = new Panel { Location = new Point(20, 10), Size = new Size(300, 70), BackColor = Color.FromArgb(39, 174, 96) };
+            var lblC1T = new Label { Text = "TỔNG DOANH THU", Location = new Point(15, 10), ForeColor = Color.White, Font = new Font("Segoe UI", 9.5F, FontStyle.Bold), AutoSize = true };
+            lblReportTotalRev = new Label { Text = "0 đ", Location = new Point(15, 32), ForeColor = Color.White, Font = new Font("Segoe UI", 14F, FontStyle.Bold), AutoSize = true };
+            card1.Controls.AddRange(new Control[] { lblC1T, lblReportTotalRev });
+
+            // Card 2: Tổng đơn hàng
+            var card2 = new Panel { Location = new Point(340, 10), Size = new Size(250, 70), BackColor = Color.FromArgb(41, 128, 185) };
+            var lblC2T = new Label { Text = "TỔNG ĐƠN HOÀN THÀNH", Location = new Point(15, 10), ForeColor = Color.White, Font = new Font("Segoe UI", 9.5F, FontStyle.Bold), AutoSize = true };
+            lblReportTotalOrders = new Label { Text = "0 đơn", Location = new Point(15, 32), ForeColor = Color.White, Font = new Font("Segoe UI", 14F, FontStyle.Bold), AutoSize = true };
+            card2.Controls.AddRange(new Control[] { lblC2T, lblReportTotalOrders });
+
+            var btnRefreshReport = new Button
+            {
+                Text = "🔄 Làm Mới Báo Cáo",
+                Location = new Point(610, 20),
+                Size = new Size(160, 45),
+                BackColor = Color.FromArgb(44, 62, 80),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                Cursor = Cursors.Hand
+            };
+            btnRefreshReport.FlatAppearance.BorderSize = 0;
+            btnRefreshReport.Click += (s, e) => LoadReportsTab();
+
+            pnlTopCards.Controls.AddRange(new Control[] { card1, card2, btnRefreshReport });
+
+            var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal, SplitterDistance = 300 };
+            tabReports.Controls.Add(split);
+            split.BringToFront();
+
+            // Bảng 1: Doanh thu theo ngày (dùng View v_DailyRevenue)
+            var grpDaily = new GroupBox
+            {
+                Text = "📅 DOANH THU THEO NGÀY (v_DailyRevenue)",
+                Dock = DockStyle.Fill,
+                Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
+                Padding = new Padding(10)
+            };
+            split.Panel1.Controls.Add(grpDaily);
+
+            dgvDailyRevenue = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+                BackgroundColor = Color.White,
+                Font = new Font("Segoe UI", 9.5F)
+            };
+            grpDaily.Controls.Add(dgvDailyRevenue);
+
+            // Bảng 2: Top sản phẩm bán chạy (dùng View v_ProductSales)
+            var grpTop = new GroupBox
+            {
+                Text = "🏆 THỐNG KÊ SẢN PHẨM BÁN CHẠY (v_ProductSales)",
+                Dock = DockStyle.Fill,
+                Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
+                Padding = new Padding(10)
+            };
+            split.Panel2.Controls.Add(grpTop);
+
+            dgvTopProducts = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+                BackgroundColor = Color.White,
+                Font = new Font("Segoe UI", 9.5F)
+            };
+            grpTop.Controls.Add(dgvTopProducts);
+        }
+
+        private void LoadReportsTab()
+        {
+            try
+            {
+                // Doanh thu theo ngày: aggregate HoaDon/ThanhToan_HoaDon per date for current branch
+                string queryDaily = @"
+                    SELECT CAST(hd.NgayTao AS date) AS SaleDate,
+                           COUNT(DISTINCT hd.MaHoaDon) AS TotalOrders,
+                           ISNULL(SUM(tt.SoTien),0) AS TotalRevenue
+                    FROM dbo.HoaDon hd
+                    LEFT JOIN dbo.ThanhToan_HoaDon tt ON hd.MaHoaDon = tt.MaHoaDon
+                    WHERE hd.MaChiNhanh = @MaChiNhanh
+                    GROUP BY CAST(hd.NgayTao AS date)
+                    ORDER BY SaleDate DESC";
+
+                var pDaily = new SqlParameter[] { new SqlParameter("@MaChiNhanh", UserSession.MaChiNhanh) };
+                DataTable dtDaily = DatabaseHelper.ExecuteQuery(queryDaily, pDaily);
+                dgvDailyRevenue.DataSource = dtDaily;
+                if (dgvDailyRevenue.Columns["Doanh Thu (VNĐ)"] != null)
+                    dgvDailyRevenue.Columns["Doanh Thu (VNĐ)"].DefaultCellStyle.Format = "N0";
+
+                // Bán theo món
+                // Top products sold: aggregate ChiTiet_HoaDon joined SanPham, limited to current branch's sales
+                string querySales = @"
+                    SELECT sp.MaSanPham AS ProductCode, sp.TenSanPham AS ProductName,
+                           SUM(ct.SoLuong) AS TotalQuantitySold,
+                           ISNULL(SUM(ct.ThanhTien),0) AS TotalRevenue
+                    FROM dbo.ChiTiet_HoaDon ct
+                    INNER JOIN dbo.HoaDon hd ON ct.MaHoaDon = hd.MaHoaDon
+                    LEFT JOIN dbo.SanPham sp ON ct.MaSanPham = sp.MaSanPham
+                    WHERE hd.MaChiNhanh = @MaChiNhanh
+                    GROUP BY sp.MaSanPham, sp.TenSanPham
+                    ORDER BY TotalQuantitySold DESC";
+
+                var pSales = new SqlParameter[] { new SqlParameter("@MaChiNhanh", UserSession.MaChiNhanh) };
+                DataTable dtSales = DatabaseHelper.ExecuteQuery(querySales, pSales);
+                dgvTopProducts.DataSource = dtSales;
+                if (dgvTopProducts.Columns["Tổng Thu (VNĐ)"] != null)
+                    dgvTopProducts.Columns["Tổng Thu (VNĐ)"].DefaultCellStyle.Format = "N0";
+
+                // Tính tổng Card
+                decimal totalRev = 0;
+                int totalOrders = 0;
+                foreach (DataRow r in dtDaily.Rows)
+                {
+                    totalRev += Convert.ToDecimal(r["Doanh Thu (VNĐ)"]);
+                    totalOrders += Convert.ToInt32(r["Số Đơn Hàng"]);
+                }
+
+                lblReportTotalRev.Text = totalRev.ToString("N0", _vnCulture) + " đ";
+                lblReportTotalOrders.Text = totalOrders.ToString() + " đơn";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Lỗi tải báo cáo: " + ex.Message, "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        #endregion
+
+        #region ======================== 5. MODULE NHÂN VIÊN ========================
+
+        private DataGridView dgvEmployees = null!;
+
+        private void InitializeEmployeesTab()
+        {
+            tabEmployees.BackColor = Color.FromArgb(245, 246, 250);
+
+            var grp = new GroupBox
+            {
+                Text = "👥 DANH SÁCH NHÂN VIÊN & TÀI KHOẢN HỆ THỐNG",
+                Dock = DockStyle.Fill,
+                Font = new Font("Segoe UI", 10.5F, FontStyle.Bold),
+                Padding = new Padding(15)
+            };
+            tabEmployees.Controls.Add(grp);
+
+            dgvEmployees = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+                BackgroundColor = Color.White,
+                Font = new Font("Segoe UI", 9.5F)
+            };
+            grp.Controls.Add(dgvEmployees);
+        }
+
+        private void LoadEmployeesTab()
+        {
+            try
+            {
+                string query = @"
+                    SELECT e.EmployeeID, e.EmployeeCode AS [Mã NV], e.FullName AS [Họ và Tên], 
+                           e.Phone AS [SĐT], e.Email, e.Position AS [Chức Vụ], 
+                           u.Username AS [Tên Đăng Nhập], r.RoleName AS [Quyền Hạn], 
+                           e.Status AS [Trạng Thái]
+                    FROM dbo.Employees e
+                    LEFT JOIN dbo.Users u ON e.EmployeeID = u.EmployeeID
+                    LEFT JOIN dbo.Roles r ON u.RoleID = r.RoleID
+                    ORDER BY e.EmployeeID";
+
+                DataTable dt = DatabaseHelper.ExecuteQuery(query);
+                dgvEmployees.DataSource = dt;
+                if (dgvEmployees.Columns["EmployeeID"] != null)
+                    dgvEmployees.Columns["EmployeeID"].Visible = false;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Lỗi tải nhân viên: " + ex.Message, "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        #endregion
+    }
+}

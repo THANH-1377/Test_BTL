@@ -1,0 +1,49 @@
+using System;
+
+namespace BaiTap_WinForms.Models
+{
+    public static class UserSession
+    {
+        // Database IDs
+        public static int MaTaiKhoan { get; set; }
+        public static int MaNhanVien { get; set; }
+        public static int MaVaiTro { get; set; }
+        public static int MaChiNhanh { get; set; }
+
+        // Business codes / display
+        public static string TenDangNhap { get; set; } = string.Empty;
+        public static string HoTen { get; set; } = string.Empty;
+        public static string MaVaiTroCode { get; set; } = string.Empty; // ADMIN / MANAGER / STAFF
+        public static string TenVaiTro { get; set; } = string.Empty;
+        public static string TenChiNhanh { get; set; } = string.Empty;
+
+        public static bool IsAdmin => MaVaiTroCode.Equals("ADMIN", StringComparison.OrdinalIgnoreCase);
+
+        //Thanh-Kho
+        // --- thêm mới ---
+        public static bool IsManager => MaVaiTroCode.Equals("MANAGER", StringComparison.OrdinalIgnoreCase);
+        public static bool LaQuanLy => IsAdmin || IsManager;
+        // --- thêm mới ---
+
+        public static void Clear()
+        {
+            MaTaiKhoan = 0;
+            MaNhanVien = 0;
+            MaVaiTro = 0;
+            MaChiNhanh = 0;
+            TenDangNhap = string.Empty;
+            HoTen = string.Empty;
+            MaVaiTroCode = string.Empty;
+            TenVaiTro = string.Empty;
+            TenChiNhanh = string.Empty;
+        }
+
+        // Backwards-compatible properties used in existing UI code
+        public static int UserID { get => MaTaiKhoan; set => MaTaiKhoan = value; }
+        public static int EmployeeID { get => MaNhanVien; set => MaNhanVien = value; }
+        public static string Username { get => TenDangNhap; set => TenDangNhap = value; }
+        public static string FullName { get => HoTen; set => HoTen = value; }
+        public static string RoleName { get => MaVaiTroCode; set => MaVaiTroCode = value; }
+        public static string Position { get => TenVaiTro; set => TenVaiTro = value; }
+    }
+}
